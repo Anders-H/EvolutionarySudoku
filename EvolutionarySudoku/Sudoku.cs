@@ -1,8 +1,8 @@
-﻿namespace EvolutionarySudoku;
+namespace EvolutionarySudoku;
 
 public class Sudoku
 {
-    private int[,] _field = new int[9, 9];
+    private readonly int[,] _field = new int[9, 9];
     private const int MutationSpeed = 3;
     private const int DeadEndLimit = 60000;
 
@@ -32,7 +32,9 @@ public class Sudoku
         }
 
         //Prepare for score counting. Low is better.
-        int score = int.MaxValue, iterations = 0, generations = 0, iterationsSinceLastClimb = 0;
+        int score = GetScore(_field), iterations = 0, generations = 0, iterationsSinceLastClimb = 0;
+        var child1 = new int[9, 9];
+        var child2 = new int[9, 9];
 
         //Show progress.
 
@@ -51,12 +53,13 @@ public class Sudoku
             {
                 Mutate(_field);
                 score = GetScore(_field);
+                iterationsSinceLastClimb = 0;
             }
             
             //Breed two new sudokos and modify them slightly.
             
-            var child1 = (int[,])_field.Clone();
-            var child2 = (int[,])_field.Clone();
+            Array.Copy(_field, child1, _field.Length);
+            Array.Copy(_field, child2, _field.Length);
             Mutate(child1);
             Mutate(child2);
             
@@ -64,30 +67,32 @@ public class Sudoku
             var child1Score = GetScore(child1);
             var child2Score = GetScore(child2);
 
-            //Keep the best one, if any.
-            void Keep(int[,] a, int s)
-            {
-                _field = (int[,])a.Clone();
-                score = s;
-                generations++;
-                iterationsSinceLastClimb = 0;
-            }
-
-            if (child1Score < score)
+            if (child1Score < score && child1Score <= child2Score)
                 Keep(child1, child1Score);
             else if (child2Score < score)
                 Keep(child2, child2Score);
             else
                 iterationsSinceLastClimb++;
             
-            Thread.Yield();
-
             if ((iterations % 1000) == 0)
+            {
                 Status();
 #if DEBUG
-            Display();
-            Console.CursorTop = 0;
+                Display();
+                Console.CursorTop = 0;
 #endif
+            }
+
+            continue;
+
+            //Keep the best one, if any.
+            void Keep(int[,] a, int s)
+            {
+                Array.Copy(a, _field, _field.Length);
+                score = s;
+                generations++;
+                iterationsSinceLastClimb = 0;
+            }
         } while (score > 0);
 
         Status();
@@ -112,68 +117,29 @@ public class Sudoku
 
     private int GetScore(int[,] p)
     {
-        bool CheckRow(int[,] arr, int x, int y)
+        // Count each digit once per row, column and 3x3 box.
+        Span<int> counts = stackalloc int[27 * 9];
+        counts.Clear();
+
+        for (var y = 0; y < 9; y++)
         {
-            var val = arr[x, y];
-            var count = 0;
-            for (var i = 0; i < 9; i++)
-                if (arr[i, y] == val)
-                    count++;
-            return (count == 1);
-        }
-
-        bool CheckCol(int[,] arr, int x, int y)
-        {
-            var val = arr[x, y];
-            var count = 0;
-
-            for (var i = 0; i < 9; i++)
-                if (arr[x, i] == val)
-                    count++;
-
-            return (count == 1);
-        }
-
-        static bool CheckSection(int[,] arr, int x, int y)
-        {
-            var sectionX = x;
-
-            while (sectionX % 3 != 0)
-                sectionX--;
-
-            var sectionY = y;
-
-            while (sectionY % 3 != 0)
-                sectionY--;
-
-            var val = arr[x, y];
-            var count = 0;
-
-            for (var row = sectionX; row < sectionX + 3; row++)
+            for (var x = 0; x < 9; x++)
             {
-                for (var col = sectionY; col < sectionY + 3; col++)
-                {
-                    if (arr[col, row] == val)
-                        count++;
-                }
+                var digit = p[x, y] - 1;
+                counts[y * 9 + digit]++;
+                counts[(9 + x) * 9 + digit]++;
+                var box = (y / 3) * 3 + x / 3;
+                counts[(18 + box) * 9 + digit]++;
             }
-            
-            return (count == 1);
         }
 
+        // Each conflicting cell contributes one point per violated constraint.
         var score = 0;
 
-        for (var i = 0; i < 9; i++)
-        for (var j = 0; j < 9; j++)
+        foreach (var count in counts)
         {
-            if (!CheckRow(p, j, i))
-                score++;
-
-            if (!CheckCol(p, j, i))
-                score++;
-
-            if (!CheckSection(p, j, i))
-                score++;
+            if (count > 1)
+                score += count;
         }
 
         return score;
